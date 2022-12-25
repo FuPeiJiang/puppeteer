@@ -13,14 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import {ProtocolMapping} from 'devtools-protocol/types/protocol-mapping.js';
-
-import {EventEmitter} from './EventEmitter.js';
+import {CDPSession} from './Connection.js';
 import {Frame} from './Frame.js';
 import {HTTPRequest} from './HTTPRequest.js';
 import {SecurityDetails} from './SecurityDetails.js';
 import {Protocol} from 'devtools-protocol';
 import {ProtocolError} from './Errors.js';
+import {getReadableFromProtocolStream} from './util.js';
+import type {Readable} from 'stream';
 
 /**
  * @public
@@ -28,13 +28,6 @@ import {ProtocolError} from './Errors.js';
 export interface RemoteAddress {
   ip?: string;
   port?: number;
-}
-
-interface CDPSession extends EventEmitter {
-  send<T extends keyof ProtocolMapping.Commands>(
-    method: T,
-    ...paramArgs: ProtocolMapping.Commands[T]['paramsType']
-  ): Promise<ProtocolMapping.Commands[T]['returnType']>;
 }
 
 /**
@@ -47,6 +40,7 @@ export class HTTPResponse {
   #client: CDPSession;
   #request: HTTPRequest;
   #contentPromise: Promise<Buffer> | null = null;
+  #contentStream: Promise<Readable> | null = null;
   #bodyLoadedPromise: Promise<Error | void>;
   #bodyLoadedPromiseFulfill: (err: Error | void) => void = () => {};
   #remoteAddress: RemoteAddress;
@@ -222,6 +216,26 @@ export class HTTPResponse {
       });
     }
     return this.#contentPromise;
+  }
+
+  /**
+   * @returns Promise which resolves to a stream with response body.
+   */
+  async stream(): Promise<Readable> {
+    if (!this.#contentStream) {
+      const result = await this.#client.send(
+        'Network.takeResponseBodyForInterceptionAsStream',
+        {
+          interceptionId: this.#request._requestId,
+        }
+      );
+
+      this.#contentStream = getReadableFromProtocolStream(
+        this.#client,
+        result.stream
+      );
+    }
+    return this.#contentStream;
   }
 
   /**
